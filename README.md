@@ -1,20 +1,41 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# GitHub Repo Agent
 
-# Run and deploy your AI Studio app
+**Advanced repository management and AI code assistant.**
 
-This contains everything you need to run your app locally.
+Developed by **Siyabonga B Phakathi** of **The Voice & Eye of Bhambatha Inc.**
 
-View your app in AI Studio: https://ai.studio/apps/7c0b7576-ce52-4395-8331-dd757df1b8b4
+---
 
-## Run Locally
+## 🌟 Features
 
-**Prerequisites:**  Node.js
+- **Interactive File Explorer**: Navigate your GitHub repositories as if they were local.
+- **AI Copilot & Elite Judge**: Get real-time AI assistance, code refactoring, complexity analysis, and document generation powered by OpenRouter.
+- **Global AI Context**: Add multiple files and folders to your AI's context window to ask complex architectural questions.
+- **Smart Folder Uploads**: Drag and drop complete directories directly into your existing GitHub repositories without breaking structure or duplicating root folders.
+- **Commit & PR Management**: Visually diff files and create conventional commits or pull requests natively.
+- **Optimized Performance**: Vendor chunks are aggressively split for fast loading times and optimized browser caching.
 
+## 🚀 Setup & Installation
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+**Prerequisites:**  Node.js (v18+)
+
+1. Clone the repository and install dependencies:
+   ```bash
+   npm install
+   ```
+2. Start the development server:
+   ```bash
+   npm run dev
+   ```
+3. Build for production:
+   ```bash
+   npm run build
+   ```
+
+## 🌐 Connect
+- [Blog](https://www.bhambathablog.wordpress.com)
+- [Facebook](https://www.facebook.com/C.Datoxic.P)
+- [WebSim](https://www.websim.com/@whisperinggalaxyd)
+- [GitHub](https://www.github.com/datoxic0)
+- [Discord](https://discord.com/channels/datoxic0)
+- [X (Twitter)](https://x.com/Siya_B_Phakathi)
