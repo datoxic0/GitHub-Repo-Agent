@@ -1,0 +1,6 @@
+{
+  "name": "GitHub Repo Agent",
+  "description": "A powerful, clean, and highly intuitive desktop-style client to browse repositories, edit/commit files, create branches, and upload entire local folders to GitHub recursively.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

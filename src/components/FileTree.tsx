@@ -1,0 +1,148 @@
+import React, { useState } from 'react';
+import { ChevronRight, ChevronDown, Folder, File, Loader2 } from 'lucide-react';
+import { GitHubContentItem } from '../types';
+
+interface FileTreeProps {
+  items: GitHubContentItem[];
+  selectedPath: string | null;
+  onFileSelect: (path: string, sha: string) => void;
+  fetchDirectory: (path: string) => Promise<GitHubContentItem[]>;
+}
+
+export default function FileTree({ items, selectedPath, onFileSelect, fetchDirectory }: FileTreeProps) {
+  const sortedItems = [...items].sort((a, b) => {
+    if (a.type === b.type) return a.name.localeCompare(b.name);
+    return a.type === 'dir' ? -1 : 1;
+  });
+
+  return (
+    <ul className="space-y-1">
+      {sortedItems.map((item) => (
+        <TreeItem
+          key={item.path}
+          item={item}
+          selectedPath={selectedPath}
+          onFileSelect={onFileSelect}
+          fetchDirectory={fetchDirectory}
+        />
+      ))}
+    </ul>
+  );
+}
+
+interface TreeItemProps {
+  key?: string;
+  item: GitHubContentItem;
+  selectedPath: string | null;
+  onFileSelect: (path: string, sha: string) => void;
+  fetchDirectory: (path: string) => Promise<GitHubContentItem[]>;
+}
+
+function TreeItem({ item, selectedPath, onFileSelect, fetchDirectory }: TreeItemProps) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [children, setChildren] = useState<GitHubContentItem[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+
+  const isDir = item.type === 'dir';
+  const isSelected = selectedPath === item.path;
+
+  const handleToggle = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!isDir) {
+      onFileSelect(item.path, item.sha);
+      return;
+    }
+
+    if (!isOpen) {
+      setIsLoading(true);
+      try {
+        const subItems = await fetchDirectory(item.path);
+        setChildren(subItems);
+        setIsOpen(true);
+      } catch (err) {
+        console.error('Error opening directory:', err);
+      } finally {
+        setIsLoading(false);
+      }
+    } else {
+      setIsOpen(false);
+    }
+  };
+
+  const getFileIcon = (fileName: string) => {
+    const ext = fileName.split('.').pop()?.toLowerCase();
+    switch (ext) {
+      case 'json':
+      case 'json5':
+        return <span className="text-yellow-500 font-mono font-semibold text-xs shrink-0">{`{}`}</span>;
+      case 'js':
+      case 'jsx':
+      case 'ts':
+      case 'tsx':
+        return <span className="text-sky-500 font-mono font-bold text-xs shrink-0">JS</span>;
+      case 'css':
+      case 'scss':
+      case 'less':
+        return <span className="text-teal-400 font-mono font-bold text-xs shrink-0">#</span>;
+      case 'md':
+      case 'markdown':
+        return <span className="text-indigo-400 font-mono font-bold text-xs shrink-0">M↓</span>;
+      default:
+        return <File className="w-4 h-4 text-slate-400 dark:text-slate-300 shrink-0" />;
+    }
+  };
+
+  return (
+    <li className="select-none">
+      <div
+        onClick={handleToggle}
+        className={`flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer transition-colors text-sm font-medium ${
+          isSelected
+            ? 'bg-blue-600 text-white shadow-sm'
+            : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+        }`}
+      >
+        <span className="w-4 h-4 flex items-center justify-center shrink-0">
+          {isDir ? (
+            isOpen ? (
+              <ChevronDown className={`w-3.5 h-3.5 ${isSelected ? 'text-white' : 'text-slate-500'}`} />
+            ) : (
+              <ChevronRight className={`w-3.5 h-3.5 ${isSelected ? 'text-white' : 'text-slate-500'}`} />
+            )
+          ) : null}
+        </span>
+
+        <span className="w-4 h-4 flex items-center justify-center shrink-0">
+          {isLoading ? (
+            <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-500" />
+          ) : isDir ? (
+            <Folder className={`w-4 h-4 ${isSelected ? 'text-white' : 'text-amber-500 dark:text-amber-400'} shrink-0`} />
+          ) : (
+            getFileIcon(item.name)
+          )}
+        </span>
+
+        <span className="truncate flex-1 text-[13px]">{item.name}</span>
+      </div>
+
+      {isDir && isOpen && children.length > 0 && (
+        <ul className="pl-4 mt-1 border-l border-slate-200 dark:border-slate-800 ml-3.5 space-y-1">
+          {children
+            .sort((a, b) => {
+              if (a.type === b.type) return a.name.localeCompare(b.name);
+              return a.type === 'dir' ? -1 : 1;
+            })
+            .map((child) => (
+              <TreeItem
+                key={child.path}
+                item={child}
+                selectedPath={selectedPath}
+                onFileSelect={onFileSelect}
+                fetchDirectory={fetchDirectory}
+              />
+            ))}
+        </ul>
+      )}
+    </li>
+  );
+}
