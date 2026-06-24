@@ -4,7 +4,8 @@ import {
   X, GitCommit, Trash2, FilePlus, GitBranch, 
   Settings, FolderUp, RefreshCw, AlertTriangle, 
   HelpCircle, Shield, Globe, ShieldAlert, CheckCircle2,
-  GitPullRequest, Check, FileText, Plus, Search, AlertCircle
+  GitPullRequest, Check, FileText, Plus, Search, AlertCircle,
+  Sparkles
 } from 'lucide-react';
 import { GitHubRepo, GitHubCommit, LocalFile, GitHubBranch, GitHubPR, DiffItem } from '../types';
 
@@ -127,12 +128,19 @@ interface CommitModalProps {
   onCommit: (message: string) => Promise<void>;
   filePath: string;
   fileContent?: string;
+  originalContent?: string;
+  aiEnabled?: boolean;
+  onGenerateCommitMessage?: (currentContent: string, originalContent: string) => Promise<string>;
 }
 
-export function CommitModal({ isOpen, onClose, onCommit, filePath, fileContent = '' }: CommitModalProps) {
+export function CommitModal({ 
+  isOpen, onClose, onCommit, filePath, fileContent = '', 
+  originalContent = '', aiEnabled = false, onGenerateCommitMessage 
+}: CommitModalProps) {
   const [message, setMessage] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [bypassCheck, setBypassCheck] = useState(false);
+  const [aiLoading, setAiLoading] = useState(false);
 
   const detectedSecrets = scanForSecrets(fileContent);
   const hasSecrets = detectedSecrets.length > 0;
@@ -198,9 +206,41 @@ export function CommitModal({ isOpen, onClose, onCommit, filePath, fileContent =
         )}
 
         <div>
-          <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-2">
-            Commit Message
-          </label>
+          <div className="flex items-center justify-between mb-2">
+            <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+              Commit Message
+            </label>
+            {aiEnabled && onGenerateCommitMessage && (
+              <button
+                type="button"
+                onClick={async () => {
+                  setAiLoading(true);
+                  try {
+                    const msg = await onGenerateCommitMessage(fileContent, originalContent);
+                    setMessage(msg.trim().replace(/^["']|["']$/g, ''));
+                  } catch (err: any) {
+                    alert(`AI Error: ${err.message}`);
+                  } finally {
+                    setAiLoading(false);
+                  }
+                }}
+                disabled={aiLoading}
+                className="text-xs font-bold text-purple-600 hover:text-purple-700 dark:text-purple-400 dark:hover:text-purple-300 flex items-center gap-1 cursor-pointer transition-colors disabled:opacity-50"
+              >
+                {aiLoading ? (
+                  <>
+                    <RefreshCw className="w-3 h-3 animate-spin" />
+                    Generating message...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-3.5 h-3.5" />
+                    Generate with AI
+                  </>
+                )}
+              </button>
+            )}
+          </div>
           <input
             type="text"
             required
@@ -652,6 +692,7 @@ export function FolderUploadModal({
   const [existingRepo, setExistingRepo] = useState('');
   const [existingBranch, setExistingBranch] = useState('');
   const [branchList, setBranchList] = useState<GitHubBranch[]>([]);
+  const [isCustomBranchMode, setIsCustomBranchMode] = useState(false);
   const [commitMsg, setCommitMsg] = useState('');
   const [isLoadingBranches, setIsLoadingBranches] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -660,6 +701,8 @@ export function FolderUploadModal({
 
   // Diff & Sync States
   const [localFiles, setLocalFiles] = useState<LocalFile[]>([]);
+  const [excludedPaths, setExcludedPaths] = useState<Set<string>>(new Set());
+  const [diffSearch, setDiffSearch] = useState('');
   const [trueSyncMode, setTrueSyncMode] = useState(false);
   const [isAnalyzingDiff, setIsAnalyzingDiff] = useState(false);
   const [computedDiffs, setComputedDiffs] = useState<DiffItem[]>([]);
@@ -670,6 +713,8 @@ export function FolderUploadModal({
   const [isScanningSecrets, setIsScanningSecrets] = useState(false);
   const [bypassCheck, setBypassCheck] = useState(false);
 
+  const activeFiles = localFiles.filter(lf => !excludedPaths.has(lf.path));
+
   useEffect(() => {
     if (isOpen) {
       setBypassCheck(false);
@@ -677,7 +722,12 @@ export function FolderUploadModal({
   }, [isOpen]);
 
   useEffect(() => {
-    if (localFiles.length === 0) {
+    setExcludedPaths(new Set());
+    setDiffSearch('');
+  }, [localFiles]);
+
+  useEffect(() => {
+    if (activeFiles.length === 0) {
       setDetectedSecrets([]);
       return;
     }
@@ -687,9 +737,9 @@ export function FolderUploadModal({
       const results: { filePath: string; secrets: string[] }[] = [];
       const textExtensions = ['txt', 'js', 'ts', 'tsx', 'jsx', 'json', 'yml', 'yaml', 'md', 'env', 'xml', 'conf', 'config', 'sh', 'py', 'go', 'rs', 'cpp', 'h', 'java', 'cs', 'html', 'css', 'php', 'rb'];
 
-      const scanLimit = Math.min(localFiles.length, 100);
+      const scanLimit = Math.min(activeFiles.length, 100);
       for (let i = 0; i < scanLimit; i++) {
-        const { path, file } = localFiles[i];
+        const { path, file } = activeFiles[i];
         if (file.size < 1024 * 1024) { // < 1MB
           const ext = path.split('.').pop()?.toLowerCase() || '';
           if (textExtensions.includes(ext) || file.type.startsWith('text/') || ext === '') {
@@ -710,7 +760,7 @@ export function FolderUploadModal({
     };
 
     runScan();
-  }, [localFiles]);
+  }, [localFiles, excludedPaths]);
 
   // Auto set existing repo values and loaded files
   useEffect(() => {
@@ -750,12 +800,19 @@ export function FolderUploadModal({
         const [owner, repo] = existingRepo.split('/');
         try {
           const branches = await apiRequest(`https://api.github.com/repos/${owner}/${repo}/branches?per_page=100`);
-          setBranchList(branches);
-          if (branches.length > 0) {
+          setBranchList(branches || []);
+          if (branches && branches.length > 0) {
             setExistingBranch(branches[0].name);
+            setIsCustomBranchMode(false);
+          } else {
+            setExistingBranch('main');
+            setIsCustomBranchMode(true);
           }
         } catch (err: any) {
-          toast(`Failed to load branches: ${err.message}`, 'error');
+          toast(`Failed to load branches: ${err.message}. Enabling manual entry.`, 'warn');
+          setBranchList([]);
+          setExistingBranch('main');
+          setIsCustomBranchMode(true);
         } finally {
           setIsLoadingBranches(false);
         }
@@ -877,17 +934,33 @@ export function FolderUploadModal({
 
     const files: LocalFile[] = [];
     const readDir = async (handle: any, prefix = '') => {
+      const ignoreDirs = ['.git', 'node_modules', '.DS_Store', 'dist', 'build', 'out'];
       for await (const entry of handle.values()) {
-        if (entry.kind === 'file') {
-          const file = await entry.getFile();
-          files.push({ path: prefix + entry.name, file });
-        } else if (entry.kind === 'directory') {
-          await readDir(entry, prefix + entry.name + '/');
+        if (ignoreDirs.includes(entry.name)) {
+          continue;
+        }
+        try {
+          if (entry.kind === 'file') {
+            try {
+              const file = await entry.getFile();
+              files.push({ path: prefix + entry.name, file });
+            } catch (fileErr) {
+              console.warn(`Skipping unreadable file "${prefix + entry.name}":`, fileErr);
+            }
+          } else if (entry.kind === 'directory') {
+            await readDir(entry, prefix + entry.name + '/');
+          }
+        } catch (entryErr) {
+          console.warn(`Skipping entry "${prefix + entry.name}":`, entryErr);
         }
       }
     };
 
-    await readDir(dirHandle);
+    try {
+      await readDir(dirHandle);
+    } catch (readErr: any) {
+      toast(`Error reading some parts of the folder: ${readErr.message}`, 'warn');
+    }
 
     if (files.length === 0) {
       toast('No files found in the selected folder.', 'warn');
@@ -898,8 +971,8 @@ export function FolderUploadModal({
   };
 
   const handleUpload = async () => {
-    if (localFiles.length === 0) {
-      toast('Please select a folder or files first.', 'warn');
+    if (activeFiles.length === 0) {
+      toast('Please select at least one file or folder to upload.', 'warn');
       return;
     }
 
@@ -930,13 +1003,29 @@ export function FolderUploadModal({
             name: repoName,
             description: newRepoDesc.trim(),
             private: newRepoVisibility === 'private',
-            auto_init: false,
+            auto_init: true,
           }),
         });
 
         owner = repoObj.owner.login;
         repo = repoObj.name;
         branch = repoObj.default_branch || 'main';
+
+        // Wait a brief moment for GitHub to initialize the default branch and the initial README commit
+        setProgressText('Waiting for repository initialization on GitHub...');
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+
+        try {
+          const refObj = await apiRequest(`https://api.github.com/repos/${owner}/${repo}/git/ref/heads/${encodeURIComponent(branch)}`);
+          parentSha = refObj.object.sha;
+
+          const commitObj = await apiRequest(`https://api.github.com/repos/${owner}/${repo}/git/commits/${parentSha}`);
+          baseTreeSha = commitObj.tree.sha;
+        } catch (err) {
+          console.warn('Could not fetch initial commit from newly created repository, falling back to empty repository creation:', err);
+          parentSha = null;
+          baseTreeSha = null;
+        }
       } else {
         if (!existingRepo || !existingBranch) {
           toast('Please choose a repository and a branch.', 'error');
@@ -959,17 +1048,40 @@ export function FolderUploadModal({
         }
       }
 
+      // If the repository/branch has no commit history (completely empty), we must initialize it
+      // first (e.g. create README.md) because tree-based database writes fail on empty repositories.
+      if (!parentSha) {
+        setProgressText('Initializing empty repository with a README.md file...');
+        try {
+          const initRes = await apiRequest(`https://api.github.com/repos/${owner}/${repo}/contents/README.md`, {
+            method: 'PUT',
+            body: JSON.stringify({
+              message: 'Initial commit (AI Workspace Companion)',
+              content: btoa(`# ${repo}\n\nRepository initialized with local workspace assets.`),
+              branch: branch,
+            }),
+          });
+          parentSha = initRes.commit?.sha || initRes.content?.sha;
+          if (parentSha) {
+            const commitObj = await apiRequest(`https://api.github.com/repos/${owner}/${repo}/git/commits/${parentSha}`);
+            baseTreeSha = commitObj.tree?.sha || null;
+          }
+        } catch (initErr: any) {
+          console.warn('Failed to perform initial README commit, attempting direct database commit:', initErr);
+        }
+      }
+
       // 2. Create blobs
       const blobs: { path: string; mode: string; type: string; sha: string }[] = [];
       let index = 0;
 
-      for (const { path, file } of localFiles) {
+      for (const { path, file } of activeFiles) {
         if (file.size > 100 * 1024 * 1024) {
           throw new Error(`File "${path}" exceeds 100MB. GitHub rejects files larger than 100MB.`);
         }
 
-        setProgressText(`Uploading file ${index + 1} of ${localFiles.length}:\n${path}`);
-        setProgressPercent(Math.round((index / localFiles.length) * 80)); // scale up to 80%
+        setProgressText(`Uploading file ${index + 1} of ${activeFiles.length}:\n${path}`);
+        setProgressPercent(Math.round((index / activeFiles.length) * 80)); // scale up to 80%
 
         const arrayBuf = await file.arrayBuffer();
         const base64 = arrayBufferToBase64(arrayBuf);
@@ -1025,8 +1137,8 @@ export function FolderUploadModal({
       setProgressText('Updating branch references on GitHub...');
       setProgressPercent(95);
 
-      if (uploadMode === 'new') {
-        // Create ref
+      if (!parentSha) {
+        // Create ref (if the branch does not exist yet and parentSha is null)
         await apiRequest(`https://api.github.com/repos/${owner}/${repo}/git/refs`, {
           method: 'POST',
           body: JSON.stringify({
@@ -1035,12 +1147,12 @@ export function FolderUploadModal({
           }),
         });
       } else {
-        // Update ref
+        // Update ref (standard update or for newly auto_init created repo that has an initial commit)
         await apiRequest(`https://api.github.com/repos/${owner}/${repo}/git/refs/heads/${encodeURIComponent(branch)}`, {
           method: 'PATCH',
           body: JSON.stringify({
             sha: commitObj.sha,
-            force: trueSyncMode, // force update when doing true sync
+            force: uploadMode === 'new' ? true : trueSyncMode, // force update on new repos or when doing true sync
           }),
         });
       }
@@ -1182,13 +1294,36 @@ export function FolderUploadModal({
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5">
-                    Select Target Branch
-                  </label>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                      Target Branch
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsCustomBranchMode(!isCustomBranchMode);
+                        if (!isCustomBranchMode && !existingBranch) {
+                          setExistingBranch('main');
+                        }
+                      }}
+                      className="text-[10px] font-extrabold text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 transition-colors uppercase tracking-wider"
+                    >
+                      {isCustomBranchMode ? 'List' : 'Custom'}
+                    </button>
+                  </div>
                   {isLoadingBranches ? (
                     <div className="flex items-center gap-2 text-sm text-slate-500 font-medium py-2">
                       <RefreshCw className="w-4 h-4 animate-spin text-blue-500" /> Loaded branches...
                     </div>
+                  ) : isCustomBranchMode ? (
+                    <input
+                      type="text"
+                      required
+                      value={existingBranch}
+                      onChange={(e) => setExistingBranch(e.target.value)}
+                      placeholder="e.g. main"
+                      className="w-full bg-slate-50 dark:bg-slate-950 focus:bg-white border-2 border-slate-200 dark:border-slate-800 focus:border-blue-500 dark:focus:border-blue-600 rounded-xl p-3 text-sm font-medium transition-all"
+                    />
                   ) : (
                     <select
                       value={existingBranch}
@@ -1236,17 +1371,79 @@ export function FolderUploadModal({
             <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5">
               Local Assets Selection
             </label>
-            <div className="flex gap-3 items-center">
+            <div className="flex flex-wrap gap-3 items-center">
+              {/* Hidden standard file input */}
+              <input
+                type="file"
+                id="standard-file-input"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  if (e.target.files) {
+                    const files = Array.from(e.target.files).map((file: any) => ({
+                      path: file.name,
+                      file
+                    }));
+                    if (files.length > 0) {
+                      setLocalFiles(files);
+                      toast(`Loaded ${files.length} file(s) successfully!`, 'success');
+                    }
+                  }
+                }}
+              />
+              {/* Hidden standard folder input */}
+              <input
+                type="file"
+                id="standard-folder-input"
+                multiple
+                {...{
+                  webkitdirectory: "",
+                  directory: ""
+                } as any}
+                className="hidden"
+                onChange={(e) => {
+                  if (e.target.files) {
+                    const files = Array.from(e.target.files).map((file: any) => ({
+                      path: file.webkitRelativePath || file.name,
+                      file
+                    }));
+                    if (files.length > 0) {
+                      setLocalFiles(files);
+                      toast(`Loaded ${files.length} file(s) from folder successfully!`, 'success');
+                    }
+                  }
+                }}
+              />
+
               <button
                 type="button"
-                onClick={selectFolderPicker}
+                onClick={() => document.getElementById('standard-file-input')?.click()}
                 className="btn-outline px-4 py-2.5 flex items-center gap-2 text-sm font-semibold cursor-pointer"
               >
-                <FolderUp className="w-4 h-4 text-blue-500" /> Select Folder on PC
+                <FileText className="w-4 h-4 text-emerald-500" /> Select Files
               </button>
+
+              <button
+                type="button"
+                onClick={() => document.getElementById('standard-folder-input')?.click()}
+                className="btn-outline px-4 py-2.5 flex items-center gap-2 text-sm font-semibold cursor-pointer"
+              >
+                <FolderUp className="w-4 h-4 text-blue-500" /> Select Folder
+              </button>
+
+              {typeof (window as any).showDirectoryPicker === 'function' && (
+                <button
+                  type="button"
+                  onClick={selectFolderPicker}
+                  className="btn-outline px-4 py-2.5 flex items-center gap-2 text-sm font-semibold cursor-pointer text-purple-600 dark:text-purple-400 border-purple-200 hover:bg-purple-100/50 dark:border-purple-900/40 dark:hover:bg-purple-950/20"
+                >
+                  <FolderUp className="w-4 h-4" /> Native Folder Picker
+                </button>
+              )}
+
               {localFiles.length > 0 && (
                 <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/20 px-3 py-1.5 rounded-lg border border-emerald-100 dark:border-emerald-900/35">
-                  ✓ {localFiles.length} files loaded
+                  ✓ {activeFiles.length} of {localFiles.length} files selected
                 </span>
               )}
             </div>
@@ -1254,9 +1451,14 @@ export function FolderUploadModal({
 
           {/* INTERACTIVE DIFF VIEW PANEL */}
           {localFiles.length > 0 && (
-            <div className="space-y-2 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden bg-slate-50 dark:bg-slate-950/40 p-4">
-              <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-2 mb-2">
-                <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Review Changes / File Diff</span>
+            <div className="space-y-3 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden bg-slate-50 dark:bg-slate-950/40 p-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-800 pb-2.5">
+                <div>
+                  <span className="text-xs font-bold uppercase tracking-wider text-slate-500 block">Review Changes / File Diff</span>
+                  <span className="text-[10px] text-slate-400 font-semibold block mt-0.5">
+                    Toggle checkboxes to include/exclude files from upload
+                  </span>
+                </div>
                 {isAnalyzingDiff ? (
                   <span className="text-xs font-medium text-slate-400 flex items-center gap-1"><RefreshCw className="w-3 h-3 animate-spin text-blue-500" /> Computing diff...</span>
                 ) : (
@@ -1266,33 +1468,105 @@ export function FolderUploadModal({
                 )}
               </div>
 
-              <div className="max-h-36 overflow-y-auto space-y-1 text-xs">
-                {computedDiffs.map((diff) => {
-                  let badge = 'bg-emerald-50 text-emerald-600 border-emerald-100 dark:bg-emerald-950/20 dark:text-emerald-400 dark:border-emerald-900/40';
-                  let label = 'Add';
-                  if (diff.type === 'modified') {
-                    badge = 'bg-blue-50 text-blue-600 border-blue-100 dark:bg-blue-950/20 dark:text-blue-400 dark:border-blue-900/40';
-                    label = 'Modify';
-                  } else if (diff.type === 'deleted') {
-                    badge = 'bg-rose-50 text-rose-600 border-rose-100 dark:bg-rose-950/20 dark:text-rose-400 dark:border-rose-900/40';
-                    label = 'Delete';
-                    if (!trueSyncMode) return null; // don't list deleted remote files if trueSync is off
-                  }
+              {/* Search and Quick Filters */}
+              <div className="flex flex-col sm:flex-row gap-2">
+                <div className="relative flex-1">
+                  <Search className="absolute left-2.5 top-2.5 w-3.5 h-3.5 text-slate-400" />
+                  <input
+                    type="text"
+                    value={diffSearch}
+                    onChange={(e) => setDiffSearch(e.target.value)}
+                    placeholder="Search/Filter files..."
+                    className="w-full pl-8 pr-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-250 dark:border-slate-800 focus:border-blue-500 dark:focus:border-blue-600 rounded-lg text-xs font-medium transition-all text-slate-800 dark:text-slate-200"
+                  />
+                </div>
+                <div className="flex gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const filteredDiffs = computedDiffs.filter(d => d.path.toLowerCase().includes(diffSearch.toLowerCase()));
+                      setExcludedPaths(prev => {
+                        const next = new Set(prev);
+                        filteredDiffs.forEach(d => next.delete(d.path));
+                        return next;
+                      });
+                    }}
+                    className="text-[11px] font-bold bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-950/80 px-2.5 py-1.5 rounded-lg border border-blue-100/60 dark:border-blue-900/40 transition-all cursor-pointer"
+                  >
+                    Select All
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const filteredDiffs = computedDiffs.filter(d => d.path.toLowerCase().includes(diffSearch.toLowerCase()));
+                      setExcludedPaths(prev => {
+                        const next = new Set(prev);
+                        filteredDiffs.forEach(d => next.add(d.path));
+                        return next;
+                      });
+                    }}
+                    className="text-[11px] font-bold bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 transition-all cursor-pointer"
+                  >
+                    Deselect All
+                  </button>
+                </div>
+              </div>
 
-                  return (
-                    <div key={diff.path} className="flex items-center justify-between p-1.5 hover:bg-slate-100 dark:hover:bg-slate-900 rounded-lg transition-colors">
-                      <div className="flex items-center gap-2 truncate">
-                        <span className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded border ${badge}`}>
-                          {label}
+              <div className="max-h-36 overflow-y-auto space-y-1 text-xs border border-slate-200/60 dark:border-slate-800/60 rounded-lg p-1.5 bg-white/40 dark:bg-slate-950/20">
+                {(() => {
+                  const filteredDiffs = computedDiffs.filter(d => d.path.toLowerCase().includes(diffSearch.toLowerCase()));
+                  if (filteredDiffs.length === 0) {
+                    return <div className="py-4 text-center text-slate-400 text-xs font-semibold">No files match filter</div>;
+                  }
+                  return filteredDiffs.map((diff) => {
+                    const isChecked = !excludedPaths.has(diff.path);
+                    let badge = 'bg-emerald-50 text-emerald-600 border-emerald-100 dark:bg-emerald-950/20 dark:text-emerald-400 dark:border-emerald-900/40';
+                    let label = 'Add';
+                    if (diff.type === 'modified') {
+                      badge = 'bg-blue-50 text-blue-600 border-blue-100 dark:bg-blue-950/20 dark:text-blue-400 dark:border-blue-900/40';
+                      label = 'Modify';
+                    } else if (diff.type === 'deleted') {
+                      badge = 'bg-rose-50 text-rose-600 border-rose-100 dark:bg-rose-950/20 dark:text-rose-400 dark:border-rose-900/40';
+                      label = 'Delete';
+                      if (!trueSyncMode) return null; // don't list deleted remote files if trueSync is off
+                    }
+
+                    return (
+                      <label 
+                        key={diff.path} 
+                        className={`flex items-center justify-between p-2 hover:bg-slate-100/60 dark:hover:bg-slate-900/60 rounded-lg transition-colors cursor-pointer select-none ${
+                          !isChecked ? 'opacity-55 bg-slate-100/30 dark:bg-slate-950/10' : ''
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => {
+                              setExcludedPaths(prev => {
+                                const next = new Set(prev);
+                                if (next.has(diff.path)) {
+                                  next.delete(diff.path);
+                                } else {
+                                  next.add(diff.path);
+                                }
+                                return next;
+                              });
+                            }}
+                            className="w-4 h-4 rounded text-blue-600 border-slate-300 dark:border-slate-700 focus:ring-blue-500 cursor-pointer shrink-0"
+                          />
+                          <span className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded border shrink-0 ${badge}`}>
+                            {label}
+                          </span>
+                          <span className="font-mono text-[11px] text-slate-700 dark:text-slate-300 truncate">{diff.path}</span>
+                        </div>
+                        <span className="font-mono text-[10px] text-slate-400 shrink-0 ml-2">
+                          {diff.localSize !== undefined ? `${(diff.localSize/1024).toFixed(1)} KB` : '—'}
                         </span>
-                        <span className="font-mono text-[11px] text-slate-700 dark:text-slate-300 truncate">{diff.path}</span>
-                      </div>
-                      <span className="font-mono text-[10px] text-slate-400 shrink-0">
-                        {diff.localSize !== undefined ? `${(diff.localSize/1024).toFixed(1)} KB` : '—'}
-                      </span>
-                    </div>
-                  );
-                })}
+                      </label>
+                    );
+                  });
+                })()}
               </div>
             </div>
           )}
@@ -1313,7 +1587,11 @@ export function FolderUploadModal({
                       type="button"
                       onClick={() => {
                         const flaggedPaths = detectedSecrets.map(ds => ds.filePath);
-                        setLocalFiles(prev => prev.filter(f => !flaggedPaths.includes(f.path)));
+                        setExcludedPaths(prev => {
+                          const next = new Set(prev);
+                          flaggedPaths.forEach(p => next.add(p));
+                          return next;
+                        });
                         toast(`Excluded all ${flaggedPaths.length} flagged files from upload`, 'info');
                       }}
                       className="shrink-0 text-[11px] bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 rounded-lg font-bold shadow-sm transition-all cursor-pointer whitespace-nowrap self-start sm:self-center"
@@ -1335,7 +1613,11 @@ export function FolderUploadModal({
                         <button
                           type="button"
                           onClick={() => {
-                            setLocalFiles(prev => prev.filter(f => f.path !== item.filePath));
+                            setExcludedPaths(prev => {
+                              const next = new Set(prev);
+                              next.add(item.filePath);
+                              return next;
+                            });
                             toast(`Excluded "${item.filePath}" from upload`, 'info');
                           }}
                           className="shrink-0 text-[10px] bg-rose-100 dark:bg-rose-900/60 hover:bg-rose-200 dark:hover:bg-rose-800 text-rose-700 dark:text-rose-200 px-2 py-1 rounded font-bold border border-rose-200 dark:border-rose-800/40 transition-all cursor-pointer"
@@ -1386,7 +1668,7 @@ export function FolderUploadModal({
             </button>
             <button
               type="button"
-              disabled={localFiles.length === 0 || !!duplicateWarning || (detectedSecrets.length > 0 && !bypassCheck)}
+              disabled={activeFiles.length === 0 || !!duplicateWarning || (detectedSecrets.length > 0 && !bypassCheck)}
               onClick={handleUpload}
               className={`px-5 py-2 flex items-center gap-2 cursor-pointer text-sm font-bold rounded-xl transition-all shadow-sm ${
                 (detectedSecrets.length > 0 && !bypassCheck)
